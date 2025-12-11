@@ -639,6 +639,270 @@ class ResponseMerger {
   }
 }
 
+class ComplexityAnalyzer {
+  async analyzeComplexity(prompt) {
+    const keywords = {
+      simple: ["button", "style", "css", "color", "simple", "fix", "small"],
+      medium: ["api", "integration", "component", "function", "refactor", "improve"],
+      complex: ["auth", "database", "system", "architecture", "infrastructure"]
+    };
+
+    const lowerPrompt = prompt.toLowerCase();
+    
+    let score = 5;
+    
+    keywords.complex.forEach(keyword => {
+      if (lowerPrompt.includes(keyword)) score = Math.min(10, score + 2);
+    });
+    
+    keywords.medium.forEach(keyword => {
+      if (lowerPrompt.includes(keyword)) score = Math.min(10, score + 1);
+    });
+    
+    keywords.simple.forEach(keyword => {
+      if (lowerPrompt.includes(keyword)) score = Math.max(1, score - 1);
+    });
+
+    score = Math.min(10, Math.max(1, score));
+    
+    let rounds = 3;
+    if (score <= 3) rounds = 2;
+    else if (score >= 8) rounds = 5;
+    
+    return {
+      complexity: score,
+      rounds,
+      difficulty: score <= 3 ? "simple" : score <= 7 ? "medium" : "complex"
+    };
+  }
+}
+
+class RecursiveRefinementEngine {
+  constructor(taskClassifier, aiPoolManager, responseMerger) {
+    this.taskClassifier = taskClassifier;
+    this.aiPoolManager = aiPoolManager;
+    this.responseMerger = responseMerger;
+    this.complexityAnalyzer = new ComplexityAnalyzer();
+  }
+
+  async executeRound(prompt, code, roundNumber, maxRounds, contextFiles, roundPurpose, selectedAIs) {
+    const refinedPrompt = this.buildRoundPrompt(prompt, code, roundNumber, roundPurpose);
+    
+    const executionResult = await this.aiPoolManager.executeParallel(
+      refinedPrompt,
+      selectedAIs,
+      contextFiles
+    );
+
+    const mergedResult = this.responseMerger.merge(
+      executionResult.responses,
+      "refactor",
+      "balanced"
+    );
+
+    return {
+      round: roundNumber,
+      purpose: roundPurpose,
+      prompt: refinedPrompt,
+      responses: executionResult.responses,
+      merged: mergedResult,
+      code: this.extractCode(mergedResult.content)
+    };
+  }
+
+  buildRoundPrompt(originalPrompt, currentCode, roundNumber, purpose) {
+    const prompts = {
+      1: `Original request: ${originalPrompt}\n\nGenerate the initial solution.`,
+      2: `Original code:\n\`\`\`\n${currentCode}\n\`\`\`\n\n${purpose}`,
+      3: `Current code:\n\`\`\`\n${currentCode}\n\`\`\`\n\nApply these critiques and improvements.`,
+      4: `Original request: ${originalPrompt}\n\nImproved code:\n\`\`\`\n${currentCode}\n\`\`\`\n\nCompare and validate: Is this better? What issues remain?`,
+      5: `Final code:\n\`\`\`\n${currentCode}\n\`\`\`\n\n${purpose}`
+    };
+    
+    return prompts[roundNumber] || prompts[1];
+  }
+
+  extractCode(content) {
+    const codeBlockRegex = /```[\s\S]*?```/g;
+    const blocks = content.match(codeBlockRegex) || [];
+    if (blocks.length > 0) {
+      return blocks[0].replace(/```[\w]*\n?/g, '').trim();
+    }
+    return content.slice(0, 500);
+  }
+
+  async getQualityScore(code) {
+    const metrics = {
+      length: Math.min(code.length / 1000, 2),
+      completeness: code.includes("function") || code.includes("class") ? 1 : 0.5,
+      documentation: (code.match(/\/\//g) || []).length / Math.max(code.split('\n').length / 10, 1),
+      structure: code.includes("{") && code.includes("}") ? 1 : 0
+    };
+
+    const score = (metrics.length + metrics.completeness + metrics.documentation + metrics.structure) / 4 * 10;
+    return Math.min(10, score);
+  }
+
+  async recursiveRefine(prompt, contextFiles, adaptiveRounds = false) {
+    const classification = this.taskClassifier.classifyTask(prompt);
+    let code = "";
+    let rounds = 5;
+
+    if (adaptiveRounds) {
+      const complexity = await this.complexityAnalyzer.analyzeComplexity(prompt);
+      rounds = complexity.rounds;
+    }
+
+    const refinementHistory = [];
+    const roundData = [];
+
+    const selectedAIs = {
+      1: this.taskClassifier.selectAIs(classification, 5),
+      2: this.taskClassifier.selectAIs(classification, 3),
+      3: this.taskClassifier.selectAIs(classification, 3),
+      4: this.taskClassifier.selectAIs(classification, 1),
+      5: this.taskClassifier.selectAIs(classification, 2)
+    };
+
+    for (let round = 1; round <= rounds; round++) {
+      let purposeText = "";
+      switch (round) {
+        case 1:
+          purposeText = "Generate the initial solution based on the request.";
+          break;
+        case 2:
+          purposeText = "Identify what's suboptimal, inefficient, or missing.";
+          break;
+        case 3:
+          purposeText = "Improve the code based on the identified critiques.";
+          break;
+        case 4:
+          purposeText = "Validate the improvements. Is it better? What issues remain?";
+          break;
+        case 5:
+          purposeText = "Apply final polish for consistency, clarity, and optimization.";
+          break;
+      }
+
+      const roundResult = await this.executeRound(
+        prompt,
+        code,
+        round,
+        rounds,
+        contextFiles,
+        purposeText,
+        selectedAIs[round]
+      );
+
+      code = roundResult.code || code;
+      roundData.push(roundResult);
+      refinementHistory.push(`Round ${round}: ${purposeText}`);
+
+      if (round < rounds) {
+        const score = await this.getQualityScore(code);
+        if (score >= 9.5) {
+          refinementHistory.push(`✓ Quality score ${score.toFixed(1)}/10 - Early exit triggered`);
+          break;
+        }
+      }
+    }
+
+    return {
+      finalCode: code,
+      refinementHistory,
+      roundData,
+      totalRounds: roundData.length
+    };
+  }
+}
+
+class ParallelRefinementTracks {
+  constructor(taskClassifier, aiPoolManager, responseMerger) {
+    this.taskClassifier = taskClassifier;
+    this.aiPoolManager = aiPoolManager;
+    this.responseMerger = responseMerger;
+    this.refinementEngine = new RecursiveRefinementEngine(
+      taskClassifier,
+      aiPoolManager,
+      responseMerger
+    );
+  }
+
+  async executeTrack(trackName, prompt, contextFiles, ais, focus) {
+    const modifiedPrompt = `${prompt}\n\nFocus: ${focus}`;
+    const classification = this.taskClassifier.classifyTask(prompt);
+
+    let code = "";
+    const trackHistory = [];
+
+    for (let round = 1; round <= 3; round++) {
+      const roundPrompt = round === 1 
+        ? modifiedPrompt 
+        : `Previous code:\n\`\`\`\n${code}\n\`\`\`\n\nImprove further with focus on: ${focus}`;
+
+      const executionResult = await this.aiPoolManager.executeParallel(
+        roundPrompt,
+        ais,
+        contextFiles
+      );
+
+      const mergedResult = this.responseMerger.merge(
+        executionResult.responses,
+        classification.primary,
+        "balanced"
+      );
+
+      code = this.refinementEngine.extractCode(mergedResult.content) || code;
+      trackHistory.push({
+        round,
+        merged: mergedResult.content,
+        code
+      });
+    }
+
+    return {
+      track: trackName,
+      finalCode: code,
+      history: trackHistory,
+      focus
+    };
+  }
+
+  async executeParallelTracks(prompt, contextFiles) {
+    const trackA = this.executeTrack(
+      "Track A: Performance-Optimized",
+      prompt,
+      contextFiles,
+      ["DeepSeek", "Mistral"],
+      "speed, efficiency, memory optimization"
+    );
+
+    const trackB = this.executeTrack(
+      "Track B: Readability-Optimized",
+      prompt,
+      contextFiles,
+      ["GPT-4o", "Perplexity"],
+      "clean, maintainable, well-documented code"
+    );
+
+    const trackC = this.executeTrack(
+      "Track C: Balanced",
+      prompt,
+      contextFiles,
+      ["Qwen", "Gemini", "Llama"],
+      "balance between all factors"
+    );
+
+    const results = await Promise.all([trackA, trackB, trackC]);
+
+    return {
+      tracks: results,
+      timestamp: Date.now(),
+      prompt
+    };
+  }
+}
+
 class MockGPTConnector {
   constructor() {
     this.id = "mock-gpt4o";
@@ -667,9 +931,21 @@ class StanzifyApp {
     this.taskClassifier = new TaskClassifier();
     this.aiPoolManager = new AIPoolManager();
     this.responseMerger = new ResponseMerger();
+    this.recursiveRefinementEngine = new RecursiveRefinementEngine(
+      this.taskClassifier,
+      this.aiPoolManager,
+      this.responseMerger
+    );
+    this.parallelRefinementTracks = new ParallelRefinementTracks(
+      this.taskClassifier,
+      this.aiPoolManager,
+      this.responseMerger
+    );
     this.orchestrationEnabled = true;
     this.lastOrchestrationResult = null;
     this.mergeStrategy = "balanced";
+    this.refinementMode = "none";
+    this.lastRefinementResult = null;
     this.elements = {};
     this.previewDirty = false;
     this.refreshPreviewDebounced = debounce(() => this.refreshPreview(), 500);
@@ -1482,6 +1758,22 @@ class StanzifyApp {
         }
       },
       {
+        label: "RR-5: 5-Round Recursive Refinement (Fixed)",
+        action: () => this.promptRecursiveRefinement(false)
+      },
+      {
+        label: "RR-5: Adaptive Refinement (Auto-Complexity)",
+        action: () => this.promptRecursiveRefinement(true)
+      },
+      {
+        label: "RR-5: Parallel Refinement Tracks (3 Paths)",
+        action: () => this.promptParallelTracks()
+      },
+      {
+        label: "View Last Refinement Result",
+        action: () => this.viewLastRefinementResult()
+      },
+      {
         label: "Reset workspace",
         action: async () => {
           if (confirm("Reset workspace to defaults?")) {
@@ -1491,6 +1783,132 @@ class StanzifyApp {
         },
       },
     ];
+  }
+
+  async promptRecursiveRefinement(adaptive = false) {
+    const prompt = this.elements.promptInput.value.trim();
+    if (!prompt) {
+      alert("Please enter a prompt first");
+      return;
+    }
+
+    this.appendMessage({
+      role: "system",
+      content: `🔄 Starting ${adaptive ? "Adaptive" : "Fixed 5-Round"} Recursive Refinement...\n${adaptive ? "Analyzing complexity..." : "Beginning 5-round refinement..."}`
+    });
+
+    this.setPromptBusy(true);
+
+    try {
+      const contextFiles = [...this.contextPaths].map((path) => ({
+        path,
+        content: this.fileSystem.getNode(path)?.content || "",
+      }));
+
+      this.setPromptStatus("Initiating refinement rounds...");
+
+      const result = await this.recursiveRefinementEngine.recursiveRefine(
+        prompt,
+        contextFiles,
+        adaptive
+      );
+
+      this.lastRefinementResult = result;
+
+      this.appendMessage({
+        role: "system",
+        content: `✅ Refinement complete! (${result.totalRounds} rounds)\n\nHistory:\n${result.refinementHistory.join("\n")}`
+      });
+
+      this.appendMessage({
+        role: "assistant",
+        content: `REFINED CODE (v${result.totalRounds}):\n\n\`\`\`\n${result.finalCode}\n\`\`\``,
+        refinement: true,
+        refinementRounds: result.totalRounds,
+        refinementType: adaptive ? "adaptive" : "fixed"
+      });
+
+    } catch (error) {
+      this.appendMessage({
+        role: "assistant",
+        content: `Refinement error: ${error.message}`
+      });
+    } finally {
+      this.setPromptBusy(false);
+    }
+  }
+
+  async promptParallelTracks() {
+    const prompt = this.elements.promptInput.value.trim();
+    if (!prompt) {
+      alert("Please enter a prompt first");
+      return;
+    }
+
+    this.appendMessage({
+      role: "system",
+      content: "🎭 Launching 3 Parallel Refinement Tracks...\n• Track A: Performance-Optimized\n• Track B: Readability-Optimized\n• Track C: Balanced\n\nExecuting in parallel..."
+    });
+
+    this.setPromptBusy(true);
+
+    try {
+      const contextFiles = [...this.contextPaths].map((path) => ({
+        path,
+        content: this.fileSystem.getNode(path)?.content || "",
+      }));
+
+      this.setPromptStatus("Executing parallel tracks...");
+
+      const result = await this.parallelRefinementTracks.executeParallelTracks(
+        prompt,
+        contextFiles
+      );
+
+      this.lastRefinementResult = result;
+
+      result.tracks.forEach((track, idx) => {
+        this.appendMessage({
+          role: "assistant",
+          content: `${track.track} - FINAL CODE:\n\n\`\`\`\n${track.finalCode}\n\`\`\`\n\nFocus: ${track.focus}`,
+          refinement: true,
+          refinementType: "parallel-track",
+          trackName: track.track,
+          trackIndex: idx
+        });
+      });
+
+      this.appendMessage({
+        role: "system",
+        content: "✅ All 3 tracks completed! Review above for each evolution path.\n\nRecommendation: Choose the track that best fits your project's priorities (performance, readability, or balance)."
+      });
+
+    } catch (error) {
+      this.appendMessage({
+        role: "assistant",
+        content: `Parallel tracks error: ${error.message}`
+      });
+    } finally {
+      this.setPromptBusy(false);
+    }
+  }
+
+  viewLastRefinementResult() {
+    if (!this.lastRefinementResult) {
+      alert("No refinement result available. Run a refinement first.");
+      return;
+    }
+
+    const result = this.lastRefinementResult;
+    
+    if (result.tracks) {
+      const summary = result.tracks.map(track => 
+        `${track.track}:\n${track.finalCode.slice(0, 200)}...`
+      ).join("\n\n");
+      alert(`Last Refinement (Parallel Tracks):\n\n${summary}`);
+    } else if (result.refinementHistory) {
+      alert(`Last Refinement Result:\n\nRounds: ${result.totalRounds}\n\nHistory:\n${result.refinementHistory.join("\n")}\n\nFinal code length: ${result.finalCode.length} chars`);
+    }
   }
 
   getMergeStrategyDescription(strategy) {
