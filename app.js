@@ -950,6 +950,15 @@ class StanzifyApp {
     this.previewDirty = false;
     this.refreshPreviewDebounced = debounce(() => this.refreshPreview(), 500);
     this.persistStateDebounced = debounce(() => this.persistState(), 400);
+    
+    // Phase 3: Verification Layer
+    this.codeValidator = new CodeValidator();
+    this.syntaxChecker = new SyntaxChecker();
+    this.testGenerator = new TestGenerator(this.aiPoolManager);
+    this.autoFixPipeline = new AutoFixPipeline(this.aiPoolManager, this.codeValidator, this.syntaxChecker);
+    this.qualityScorer = new QualityScorer(this.aiPoolManager);
+    this.verificationUI = new VerificationUI();
+    this.verificationEnabled = true;
   }
 
   async init() {
@@ -962,6 +971,57 @@ class StanzifyApp {
     this.renderContextSummary();
     this.updateTokenEstimate();
     this.refreshPreview();
+    
+    // Initialize verification layer UI
+    await this.initializeVerificationLayer();
+  }
+  
+  async initializeVerificationLayer() {
+    // Initialize verification code validators
+    await this.codeValidator.initializeTools();
+    
+    // Load test generator tools
+    await this.testGenerator.loadJest();
+    
+    // Load auto-fix statistics
+    this.autoFixPipeline.loadStatistics();
+    
+    // Initialize verification UI
+    this.verificationUI.initialize(this.elements.editorPanel);
+    
+    // Set up editor change listener for verification
+    if (this.editor) {
+      this.editor.onDidChangeModelContent(() => {
+        if (this.verificationEnabled) {
+          this.runVerificationCheck();
+        }
+      });
+    }
+  }
+  
+  async runVerificationCheck() {
+    if (!this.verificationEnabled || !this.editor) return;
+    
+    const model = this.editor.getModel();
+    if (!model) return;
+    
+    const code = model.getValue();
+    const filePath = model.uri.path;
+    
+    // Run validation
+    const validation = await this.codeValidator.validateAndFormat(code, filePath);
+    this.verificationUI.displayValidation(validation);
+    
+    // If no validation errors, run quality assessment
+    if (validation.isValid && code.length > 50) {
+      this.verificationUI.showLoading('quality');
+      try {
+        const assessment = await this.qualityScorer.assessCode(code);
+        this.verificationUI.displayQuality(assessment);
+      } catch (error) {
+        console.warn('Quality assessment failed:', error);
+      }
+    }
   }
 
   cacheElements() {
@@ -990,6 +1050,7 @@ class StanzifyApp {
       paletteInput: document.getElementById("palette-input"),
       paletteResults: document.getElementById("palette-results"),
       paletteClose: document.getElementById("palette-close"),
+      editorPanel: document.querySelector(".editor-panel"),
     };
   }
 
@@ -1755,6 +1816,70 @@ class StanzifyApp {
           const workers = this.aiPoolManager.getAllWorkers();
           const status = workers.map(w => `• ${w.name} (${w.specialty})`).join('\n');
           alert(`AI Pool Manager\n\n${workers.length} workers ready:\n\n${status}`);
+        }
+      },
+      // Phase 3: Verification Layer Commands
+      {
+        label: `${this.verificationEnabled ? "✓" : "○"} Toggle Code Verification`,
+        action: () => {
+          this.verificationEnabled = !this.verificationEnabled;
+          if (this.verificationEnabled) {
+            this.verificationUI.show();
+            this.runVerificationCheck();
+          } else {
+            this.verificationUI.hide();
+          }
+          alert(`Code Verification ${this.verificationEnabled ? "ENABLED" : "DISABLED"}`);
+        }
+      },
+      {
+        label: "Run Verification Check",
+        action: () => {
+          this.runVerificationCheck();
+        }
+      },
+      {
+        label: "Auto-Fix Errors",
+        action: async () => {
+          const model = this.editor?.getModel();
+          if (!model) {
+            alert("No file open in editor");
+            return;
+          }
+          
+          const code = model.getValue();
+          this.verificationUI.displayAutoFixProgress(1, 3);
+          
+          const result = await this.autoFixPipeline.generateWithValidation("", code);
+          this.verificationUI.displayAutoFixComplete(result);
+          
+          if (result.success) {
+            model.setValue(result.formatted || result.code);
+          }
+        }
+      },
+      {
+        label: "Generate & Run Tests",
+        action: async () => {
+          const model = this.editor?.getModel();
+          if (!model) {
+            alert("No file open in editor");
+            return;
+          }
+          
+          const code = model.getValue();
+          const result = await this.testGenerator.generateAndTest(code);
+          this.verificationUI.displayTestResults(result.execution);
+        }
+      },
+      {
+        label: "Auto-Fix Statistics",
+        action: () => {
+          const stats = this.autoFixPipeline.getStatistics();
+          const report = Object.entries(stats)
+            .map(([type, stat]) => `${type}: ${stat.aiName} (${stat.successRate} success, ${stat.attempts} attempts)`)
+            .join('\n');
+          alert(`Auto-Fix Learning Statistics:\n\n${report}`);
         }
       },
       {
