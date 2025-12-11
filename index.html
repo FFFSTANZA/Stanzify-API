@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stanzify · Phase 1 Shell</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app" class="layout">
+      <aside class="panel left-panel">
+        <section class="panel-section prompt-section">
+          <header>
+            <div>
+              <p class="eyebrow">Prompt</p>
+              <h2>Ask the orchestra</h2>
+            </div>
+            <button class="ghost" id="clear-prompt-btn" title="Clear prompt">
+              Clear
+            </button>
+          </header>
+          <textarea
+            id="prompt-input"
+            placeholder="Describe the change you need Stanzify to make..."
+          ></textarea>
+          <div class="prompt-actions">
+            <button id="send-prompt-btn" class="primary">Send to GPT-4o mini</button>
+            <div class="token-indicator">
+              <span class="label">Est. tokens</span>
+              <span id="token-count">0</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section conversation-section">
+          <header>
+            <p class="eyebrow">Conversation</p>
+            <div class="history-actions">
+              <button class="ghost" id="clear-history-btn">Clear</button>
+            </div>
+          </header>
+          <div id="conversation-list" class="conversation-list"></div>
+        </section>
+
+        <section class="panel-section filesystem-section">
+          <header>
+            <div>
+              <p class="eyebrow">Workspace</p>
+              <h2>Files & Context</h2>
+            </div>
+            <div class="fs-buttons">
+              <button id="new-file-btn" title="New File">＋</button>
+              <button id="new-folder-btn" title="New Folder">📁</button>
+              <button id="import-zip-btn" title="Import ZIP">ZIP</button>
+              <button id="import-github-btn" title="Import from GitHub">GH</button>
+            </div>
+          </header>
+          <div id="file-tree" class="file-tree"></div>
+        </section>
+
+        <section class="panel-section context-section">
+          <header>
+            <p class="eyebrow">Context Bundle</p>
+            <div class="context-actions">
+              <button class="ghost" id="context-all-btn">Full</button>
+              <button class="ghost" id="context-smart-btn">Smart</button>
+              <button class="ghost" id="context-min-btn">Minimal</button>
+            </div>
+          </header>
+          <div id="context-summary" class="context-summary"></div>
+        </section>
+      </aside>
+
+      <main class="panel editor-panel">
+        <header class="editor-header">
+          <div>
+            <p class="eyebrow">Active File</p>
+            <h2 id="active-file-label">—</h2>
+          </div>
+          <div class="editor-actions">
+            <button id="command-palette-btn" class="ghost">⌘K Command Palette</button>
+            <button id="refresh-preview-btn" class="ghost">Refresh Preview</button>
+          </div>
+        </header>
+        <div id="editor" class="editor"></div>
+      </main>
+
+      <section class="panel preview-panel">
+        <header>
+          <div>
+            <p class="eyebrow">Live Preview</p>
+            <h2>Runtime</h2>
+          </div>
+        </header>
+        <iframe id="preview-frame" title="Live preview sandbox"></iframe>
+      </section>
+    </div>
+
+    <div id="palette-overlay" class="command-palette hidden" aria-hidden="true">
+      <div class="palette-dialog" role="dialog" aria-modal="true">
+        <div class="palette-input-wrap">
+          <input
+            id="palette-input"
+            type="text"
+            placeholder="Search commands..."
+            autocomplete="off"
+          />
+          <button id="palette-close" class="ghost" aria-label="Close">✕</button>
+        </div>
+        <ul id="palette-results" class="palette-results"></ul>
+      </div>
+    </div>
+
+    <input type="file" id="zip-input" accept=".zip" hidden />
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/idb@7/build/umd.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
