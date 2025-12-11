@@ -288,6 +288,357 @@ class StateManager {
   }
 }
 
+class TaskClassifier {
+  constructor() {
+    this.keywords = {
+      refactor: ["refactor", "refactoring", "restructure", "reorganize", "clean up", "improve code"],
+      debug: ["debug", "fix", "error", "bug", "issue", "problem", "not working", "broken"],
+      create: ["create", "new", "add", "build", "make", "generate", "implement"],
+      optimize: ["optimize", "performance", "faster", "efficient", "speed up", "improve performance"],
+      explain: ["explain", "what does", "how does", "understand", "clarify", "documentation"],
+      architecture: ["architecture", "design", "structure", "pattern", "organize", "system design"]
+    };
+
+    this.aiSpecialties = {
+      "GPT-4o": ["general", "create", "debug", "explain"],
+      "GPT-4o-backup": ["general", "create", "debug"],
+      "DeepSeek": ["refactor", "optimize", "debug"],
+      "Qwen": ["refactor", "architecture", "create"],
+      "Qwen-backup": ["refactor", "architecture"],
+      "Gemini": ["create", "architecture"],
+      "Mistral": ["optimize"],
+      "Llama": ["debug"],
+      "Perplexity": ["explain"],
+      "You.com": ["debug", "create"]
+    };
+  }
+
+  classifyTask(prompt) {
+    const lowerPrompt = prompt.toLowerCase();
+    const scores = {};
+    
+    for (const [category, keywords] of Object.entries(this.keywords)) {
+      scores[category] = keywords.reduce((score, keyword) => {
+        return score + (lowerPrompt.includes(keyword) ? 1 : 0);
+      }, 0);
+    }
+
+    const primaryTask = Object.entries(scores)
+      .sort((a, b) => b[1] - a[1])[0][0];
+
+    return {
+      primary: primaryTask,
+      scores,
+      allCategories: Object.entries(scores)
+        .filter(([_, score]) => score > 0)
+        .map(([cat, _]) => cat)
+    };
+  }
+
+  selectAIs(taskClassification, count = 5) {
+    const { primary, allCategories } = taskClassification;
+    const relevantCategories = allCategories.length > 0 ? allCategories : [primary];
+    
+    const aiScores = Object.entries(this.aiSpecialties).map(([aiName, specialties]) => {
+      let score = 0;
+      
+      if (specialties.includes(primary)) score += 3;
+      
+      relevantCategories.forEach(category => {
+        if (specialties.includes(category)) score += 1;
+      });
+      
+      if (specialties.includes("general")) score += 0.5;
+      
+      return { aiName, score, specialties };
+    });
+
+    aiScores.sort((a, b) => b.score - a.score);
+    
+    return aiScores.slice(0, count).map(ai => ai.aiName);
+  }
+
+  routePrompt(prompt) {
+    const classification = this.classifyTask(prompt);
+    const targetAIs = this.selectAIs(classification, 5);
+    
+    return {
+      classification,
+      targetAIs,
+      confidence: classification.scores[classification.primary] || 0
+    };
+  }
+}
+
+class AIWorker {
+  constructor(id, name, specialty, responseVariation = 1.0) {
+    this.id = id;
+    this.name = name;
+    this.specialty = specialty;
+    this.responseVariation = responseVariation;
+  }
+
+  async sendPrompt({ prompt, contextFiles }) {
+    const baseDelay = 800 + Math.random() * 1200;
+    await delay(baseDelay * this.responseVariation);
+    
+    const summary = contextFiles
+      .map((file) => `• ${file.path} (${file.content.length} chars)`)
+      .join("\n");
+    
+    const specialtyNote = this.getSpecialtyResponse(prompt);
+    
+    return {
+      aiName: this.name,
+      content: `${this.name} (${this.specialty} specialist) response:\n\n${specialtyNote}\n\nPrompt: ${prompt.slice(0, 150)}${prompt.length > 150 ? "..." : ""}\n\nContext files (${contextFiles.length}):\n${summary || "none"}`,
+      timestamp: Date.now(),
+      specialty: this.specialty
+    };
+  }
+
+  getSpecialtyResponse(prompt) {
+    const responses = {
+      general: "I provide well-rounded, comprehensive solutions across various tasks.",
+      refactor: "I specialize in code refactoring. I would restructure this code for better maintainability and readability.",
+      debug: "As a debugging specialist, I would identify the root cause and provide a precise fix.",
+      optimize: "I focus on performance optimization. Here's how to make this faster and more efficient.",
+      architecture: "From an architectural perspective, I recommend a scalable, maintainable design pattern.",
+      create: "I excel at creating new features. Here's a clean implementation with best practices."
+    };
+    
+    return responses[this.specialty] || responses.general;
+  }
+}
+
+class AIPoolManager {
+  constructor() {
+    this.workers = new Map();
+    this.initializeWorkers();
+  }
+
+  initializeWorkers() {
+    const workerConfigs = [
+      { id: "worker-1", name: "GPT-4o", specialty: "general", variation: 1.0 },
+      { id: "worker-2", name: "GPT-4o-backup", specialty: "general", variation: 1.1 },
+      { id: "worker-3", name: "DeepSeek", specialty: "optimize", variation: 0.9 },
+      { id: "worker-4", name: "Qwen", specialty: "refactor", variation: 1.0 },
+      { id: "worker-5", name: "Qwen-backup", specialty: "refactor", variation: 1.05 },
+      { id: "worker-6", name: "Gemini", specialty: "architecture", variation: 1.2 },
+      { id: "worker-7", name: "Mistral", specialty: "optimize", variation: 0.8 },
+      { id: "worker-8", name: "Llama", specialty: "debug", variation: 1.0 },
+      { id: "worker-9", name: "Perplexity", specialty: "general", variation: 1.1 },
+      { id: "worker-10", name: "You.com", specialty: "create", variation: 0.95 }
+    ];
+
+    workerConfigs.forEach(config => {
+      const worker = new AIWorker(config.id, config.name, config.specialty, config.variation);
+      this.workers.set(config.name, worker);
+    });
+  }
+
+  async executeParallel(prompt, targetAIs, contextFiles) {
+    const promises = targetAIs.map(aiName => {
+      const worker = this.workers.get(aiName);
+      if (!worker) {
+        return Promise.resolve({
+          aiName,
+          content: `Worker ${aiName} not found`,
+          timestamp: Date.now(),
+          specialty: "unknown",
+          error: true
+        });
+      }
+      return worker.sendPrompt({ prompt, contextFiles });
+    });
+
+    const results = await Promise.all(promises);
+    
+    return {
+      responses: results,
+      timestamp: Date.now(),
+      prompt,
+      aiCount: targetAIs.length
+    };
+  }
+
+  getWorker(name) {
+    return this.workers.get(name);
+  }
+
+  getAllWorkers() {
+    return Array.from(this.workers.values());
+  }
+}
+
+class ResponseMerger {
+  constructor() {
+    this.expertWeights = {
+      refactor: { "DeepSeek": 3, "Qwen": 2.5, "Qwen-backup": 2 },
+      debug: { "Llama": 3, "GPT-4o": 2.5, "DeepSeek": 2 },
+      optimize: { "DeepSeek": 3, "Mistral": 2.5 },
+      architecture: { "Qwen": 3, "Gemini": 2.5 },
+      create: { "GPT-4o": 3, "Gemini": 2.5, "You.com": 2 },
+      explain: { "GPT-4o": 3, "Perplexity": 2.5 }
+    };
+  }
+
+  analyzeResponses(responses) {
+    const analysis = {
+      totalResponses: responses.length,
+      bySpecialty: {},
+      contentLengths: [],
+      timestamps: []
+    };
+
+    responses.forEach(response => {
+      if (!analysis.bySpecialty[response.specialty]) {
+        analysis.bySpecialty[response.specialty] = [];
+      }
+      analysis.bySpecialty[response.specialty].push(response);
+      analysis.contentLengths.push(response.content.length);
+      analysis.timestamps.push(response.timestamp);
+    });
+
+    return analysis;
+  }
+
+  extractCodeBlocks(content) {
+    const codeBlockRegex = /```[\s\S]*?```/g;
+    const blocks = content.match(codeBlockRegex) || [];
+    return blocks.map(block => block.replace(/```[\w]*\n?/g, '').trim());
+  }
+
+  findCommonalities(responses) {
+    const allCodeBlocks = responses.map(r => this.extractCodeBlocks(r.content));
+    
+    const commonPhrases = [];
+    responses.forEach((response, idx) => {
+      const words = response.content.toLowerCase().split(/\s+/);
+      const phrases = [];
+      
+      for (let i = 0; i < words.length - 2; i++) {
+        phrases.push(words.slice(i, i + 3).join(' '));
+      }
+      
+      phrases.forEach(phrase => {
+        let count = 0;
+        responses.forEach((r, i) => {
+          if (i !== idx && r.content.toLowerCase().includes(phrase)) {
+            count++;
+          }
+        });
+        
+        if (count >= Math.ceil(responses.length * 0.5)) {
+          commonPhrases.push(phrase);
+        }
+      });
+    });
+
+    return {
+      codeBlocks: allCodeBlocks,
+      commonPhrases: [...new Set(commonPhrases)].slice(0, 10),
+      agreementLevel: commonPhrases.length > 5 ? "high" : commonPhrases.length > 2 ? "medium" : "low"
+    };
+  }
+
+  democraticMerge(responses) {
+    const analysis = this.analyzeResponses(responses);
+    const commonalities = this.findCommonalities(responses);
+    
+    const majorityResponse = responses.reduce((acc, response) => {
+      return response.content.length > acc.content.length ? response : acc;
+    }, responses[0]);
+
+    return {
+      strategy: "democratic",
+      content: `MERGED RESPONSE (Democratic - ${responses.length} AIs consulted)\n\n` +
+               `Agreement Level: ${commonalities.agreementLevel.toUpperCase()}\n\n` +
+               `Common insights:\n${commonalities.commonPhrases.slice(0, 5).map(p => `• ${p}`).join('\n')}\n\n` +
+               `Base response:\n${majorityResponse.content}\n\n` +
+               `Note: This synthesis represents the consensus of ${responses.length} AI models.`,
+      analysis,
+      commonalities
+    };
+  }
+
+  expertMerge(responses, taskType) {
+    const weights = this.expertWeights[taskType] || {};
+    
+    let bestResponse = responses[0];
+    let bestScore = 0;
+
+    responses.forEach(response => {
+      const weight = weights[response.aiName] || 1;
+      const score = weight * (1 + response.content.length / 1000);
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestResponse = response;
+      }
+    });
+
+    return {
+      strategy: "expert",
+      content: `MERGED RESPONSE (Expert - ${bestResponse.aiName} selected as specialist)\n\n` +
+               `Task Type: ${taskType}\n` +
+               `Expert: ${bestResponse.aiName} (${bestResponse.specialty})\n` +
+               `Confidence Score: ${bestScore.toFixed(2)}\n\n` +
+               `${bestResponse.content}\n\n` +
+               `Note: This AI was selected as the top specialist for ${taskType} tasks.`,
+      expert: bestResponse.aiName,
+      score: bestScore
+    };
+  }
+
+  balancedMerge(responses, taskType) {
+    const democratic = this.democraticMerge(responses);
+    const expert = this.expertMerge(responses, taskType);
+    
+    return {
+      strategy: "balanced",
+      content: `MERGED RESPONSE (Balanced Approach)\n\n` +
+               `Combining democratic consensus with expert opinion for optimal results.\n\n` +
+               `TOP EXPERT RECOMMENDATION (${expert.expert}):\n${expert.content}\n\n` +
+               `CONSENSUS VIEW:\n${democratic.content}`,
+      democratic,
+      expert
+    };
+  }
+
+  merge(responses, taskType, strategy = "balanced") {
+    if (!responses || responses.length === 0) {
+      return { strategy: "none", content: "No responses to merge", responses: [] };
+    }
+
+    if (responses.length === 1) {
+      return {
+        strategy: "single",
+        content: responses[0].content,
+        responses
+      };
+    }
+
+    let result;
+    switch (strategy) {
+      case "democratic":
+        result = this.democraticMerge(responses);
+        break;
+      case "expert":
+        result = this.expertMerge(responses, taskType);
+        break;
+      case "balanced":
+      default:
+        result = this.balancedMerge(responses, taskType);
+        break;
+    }
+
+    result.responses = responses;
+    result.taskType = taskType;
+    
+    return result;
+  }
+}
+
 class MockGPTConnector {
   constructor() {
     this.id = "mock-gpt4o";
@@ -313,6 +664,12 @@ class StanzifyApp {
     this.conversationHistory = [];
     this.models = new Map();
     this.connector = new MockGPTConnector();
+    this.taskClassifier = new TaskClassifier();
+    this.aiPoolManager = new AIPoolManager();
+    this.responseMerger = new ResponseMerger();
+    this.orchestrationEnabled = true;
+    this.lastOrchestrationResult = null;
+    this.mergeStrategy = "balanced";
     this.elements = {};
     this.previewDirty = false;
     this.refreshPreviewDebounced = debounce(() => this.refreshPreview(), 500);
@@ -868,20 +1225,39 @@ class StanzifyApp {
       container.innerHTML = `<p class="eyebrow">No conversation yet.</p>`;
       return;
     }
-    this.conversationHistory.slice(-12).forEach((message) => {
+    this.conversationHistory.slice(-20).forEach((message) => {
       const node = document.createElement("div");
       node.className = `message ${message.role}`;
+      
       const header = document.createElement("div");
       header.className = "message-header";
-      const role = message.role === "user" ? "You" : "GPT-4o mini";
-      header.innerHTML = `<span>${role}</span><span>${new Date(message.timestamp).toLocaleTimeString()}</span>`;
+      
+      let roleName = "Unknown";
+      if (message.role === "user") {
+        roleName = "You";
+      } else if (message.role === "assistant") {
+        roleName = message.orchestrated 
+          ? `🎭 Merged (${message.aiCount} AIs · ${message.strategy})` 
+          : "GPT-4o mini";
+      } else if (message.role === "ai-individual") {
+        roleName = `${message.aiName} (${message.specialty})`;
+      } else if (message.role === "system") {
+        roleName = "System";
+      }
+      
+      header.innerHTML = `<span>${roleName}</span><span>${new Date(message.timestamp).toLocaleTimeString()}</span>`;
+      
       const body = document.createElement("div");
       body.className = "message-body";
+      body.style.whiteSpace = "pre-wrap";
       body.textContent = message.content;
+      
       node.appendChild(header);
       node.appendChild(body);
       container.appendChild(node);
     });
+    
+    container.scrollTop = container.scrollHeight;
   }
 
   async handlePromptSend() {
@@ -889,13 +1265,71 @@ class StanzifyApp {
     if (!prompt) return;
     this.appendMessage({ role: "user", content: prompt });
     this.setPromptBusy(true);
+    
     try {
       const contextFiles = [...this.contextPaths].map((path) => ({
         path,
         content: this.fileSystem.getNode(path)?.content || "",
       }));
-      const response = await this.connector.sendPrompt({ prompt, contextFiles });
-      this.appendMessage({ role: "assistant", content: response });
+
+      if (this.orchestrationEnabled) {
+        const routing = this.taskClassifier.routePrompt(prompt);
+        const { classification, targetAIs } = routing;
+        
+        this.appendMessage({
+          role: "system",
+          content: `🎯 Task Classification: ${classification.primary}\n🤖 Routing to: ${targetAIs.join(", ")}\n⚡ Executing in parallel...`
+        });
+
+        this.setPromptStatus(`Orchestrating ${targetAIs.length} AIs...`);
+        
+        const executionResult = await this.aiPoolManager.executeParallel(
+          prompt,
+          targetAIs,
+          contextFiles
+        );
+
+        this.setPromptStatus("Merging responses...");
+        
+        const mergedResult = this.responseMerger.merge(
+          executionResult.responses,
+          classification.primary,
+          this.mergeStrategy
+        );
+
+        this.lastOrchestrationResult = {
+          ...mergedResult,
+          routing,
+          executionResult
+        };
+
+        this.appendMessage({
+          role: "assistant",
+          content: mergedResult.content,
+          orchestrated: true,
+          aiCount: targetAIs.length,
+          taskType: classification.primary,
+          strategy: mergedResult.strategy
+        });
+
+        this.appendMessage({
+          role: "system",
+          content: `✅ Orchestration complete! ${executionResult.responses.length} AIs responded.\n📊 View individual responses in conversation history.`
+        });
+
+        executionResult.responses.forEach((response, idx) => {
+          this.appendMessage({
+            role: "ai-individual",
+            content: response.content,
+            aiName: response.aiName,
+            specialty: response.specialty,
+            timestamp: response.timestamp
+          });
+        });
+      } else {
+        const response = await this.connector.sendPrompt({ prompt, contextFiles });
+        this.appendMessage({ role: "assistant", content: response });
+      }
     } catch (error) {
       this.appendMessage({ role: "assistant", content: `Error: ${error.message}` });
     } finally {
@@ -911,7 +1345,15 @@ class StanzifyApp {
 
   setPromptBusy(isBusy) {
     this.elements.sendPromptBtn.disabled = isBusy;
-    this.elements.sendPromptBtn.textContent = isBusy ? "Routing..." : "Send to GPT-4o mini";
+    if (!isBusy) {
+      this.elements.sendPromptBtn.textContent = this.orchestrationEnabled 
+        ? "🎭 Orchestrate AIs" 
+        : "Send to GPT-4o mini";
+    }
+  }
+
+  setPromptStatus(status) {
+    this.elements.sendPromptBtn.textContent = status;
   }
 
   buildPreviewDocument() {
@@ -1014,6 +1456,32 @@ class StanzifyApp {
       { label: "Smart context", action: () => this.applyContextPreset("smart") },
       { label: "Minimal context", action: () => this.applyContextPreset("minimal") },
       {
+        label: `${this.orchestrationEnabled ? "✓" : "○"} Toggle Multi-AI Orchestration`,
+        action: () => {
+          this.orchestrationEnabled = !this.orchestrationEnabled;
+          this.setPromptBusy(false);
+          alert(`Multi-AI Orchestration ${this.orchestrationEnabled ? "ENABLED" : "DISABLED"}\n\n${this.orchestrationEnabled ? "Prompts will be routed to 5-10 AIs in parallel" : "Using single AI mode"}`);
+        }
+      },
+      {
+        label: `Merge Strategy: ${this.mergeStrategy}`,
+        action: () => {
+          const strategies = ["balanced", "democratic", "expert"];
+          const currentIdx = strategies.indexOf(this.mergeStrategy);
+          const nextIdx = (currentIdx + 1) % strategies.length;
+          this.mergeStrategy = strategies[nextIdx];
+          alert(`Merge Strategy changed to: ${this.mergeStrategy.toUpperCase()}\n\n${this.getMergeStrategyDescription(this.mergeStrategy)}`);
+        }
+      },
+      {
+        label: "View AI Pool Status",
+        action: () => {
+          const workers = this.aiPoolManager.getAllWorkers();
+          const status = workers.map(w => `• ${w.name} (${w.specialty})`).join('\n');
+          alert(`AI Pool Manager\n\n${workers.length} workers ready:\n\n${status}`);
+        }
+      },
+      {
         label: "Reset workspace",
         action: async () => {
           if (confirm("Reset workspace to defaults?")) {
@@ -1023,6 +1491,15 @@ class StanzifyApp {
         },
       },
     ];
+  }
+
+  getMergeStrategyDescription(strategy) {
+    const descriptions = {
+      balanced: "Combines expert opinion with democratic consensus for optimal results",
+      democratic: "Uses majority voting - what most AIs agree on wins",
+      expert: "Trusts the specialist AI most suited for the task type"
+    };
+    return descriptions[strategy] || "Unknown strategy";
   }
 }
 

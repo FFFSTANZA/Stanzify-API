@@ -98,6 +98,14 @@ textarea#prompt-input {
   justify-content: space-between;
 }
 
+.orchestration-info {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(64, 179, 255, 0.08);
+  border: 1px solid rgba(64, 179, 255, 0.2);
+}
+
 button.primary {
   background: linear-gradient(120deg, var(--accent), var(--accent-strong));
   border: none;
@@ -128,11 +136,12 @@ button.ghost,
 }
 
 .conversation-list {
-  max-height: 220px;
+  max-height: 400px;
   overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  scroll-behavior: smooth;
 }
 
 .message {
@@ -148,6 +157,19 @@ button.ghost,
 
 .message.assistant {
   border-color: rgba(124, 93, 255, 0.4);
+}
+
+.message.system {
+  border-color: rgba(64, 179, 255, 0.3);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.message.ai-individual {
+  border-color: rgba(124, 93, 255, 0.2);
+  background: var(--surface);
+  font-size: 12px;
+  opacity: 0.9;
 }
 
 .message-header {
