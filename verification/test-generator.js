@@ -19,13 +19,15 @@ class TestGenerator {
 
     return new Promise((resolve) => {
       const script = document.createElement('script');
-      script.src = 'https://unpkg.com/jest@29/build/jest.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/jest@29.7.0/dist/jest.min.js';
       script.onload = () => {
         this.jestLoaded = window.jest !== undefined;
+        console.log('Jest loaded successfully');
         resolve();
       };
       script.onerror = () => {
-        console.warn('Failed to load Jest');
+        console.warn('Failed to load Jest from CDN');
+        this.jestLoaded = false;
         resolve();
       };
       document.head.appendChild(script);
@@ -246,3 +248,6 @@ describe('MyFunction', () => {
     return { coverage, passed, total, level };
   }
 }
+
+// Make class available globally
+window.TestGenerator = TestGenerator;

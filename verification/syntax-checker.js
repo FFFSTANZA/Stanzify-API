@@ -247,3 +247,6 @@ class SyntaxChecker {
     };
   }
 }
+
+// Make class available globally
+window.SyntaxChecker = SyntaxChecker;

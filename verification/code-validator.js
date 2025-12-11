@@ -29,13 +29,15 @@ class CodeValidator {
 
     return new Promise((resolve) => {
       const script = document.createElement('script');
-      script.src = 'https://unpkg.com/eslint@8/dist/eslint.umd.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/eslint@8.57.0/dist/eslint.min.js';
       script.onload = () => {
         this.eslintLoaded = window.ESLint !== undefined;
+        console.log('ESLint loaded successfully');
         resolve();
       };
       script.onerror = () => {
-        console.warn('Failed to load ESLint');
+        console.warn('Failed to load ESLint from CDN');
+        this.eslintLoaded = false;
         resolve();
       };
       document.head.appendChild(script);
@@ -50,13 +52,15 @@ class CodeValidator {
 
     return new Promise((resolve) => {
       const script = document.createElement('script');
-      script.src = 'https://unpkg.com/prettier@3/standalone.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/prettier@3.0.3/standalone.min.js';
       script.onload = () => {
         this.prettierLoaded = window.prettier !== undefined;
+        console.log('Prettier loaded successfully');
         resolve();
       };
       script.onerror = () => {
-        console.warn('Failed to load Prettier');
+        console.warn('Failed to load Prettier from CDN');
+        this.prettierLoaded = false;
         resolve();
       };
       document.head.appendChild(script);
@@ -71,13 +75,15 @@ class CodeValidator {
 
     return new Promise((resolve) => {
       const script = document.createElement('script');
-      script.src = 'https://unpkg.com/typescript@5/lib/typescript.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/typescript@5.3.3/lib/typescript.js';
       script.onload = () => {
         this.tsLoaded = window.ts !== undefined;
+        console.log('TypeScript loaded successfully');
         resolve();
       };
       script.onerror = () => {
-        console.warn('Failed to load TypeScript');
+        console.warn('Failed to load TypeScript from CDN');
+        this.tsLoaded = false;
         resolve();
       };
       document.head.appendChild(script);
@@ -87,20 +93,33 @@ class CodeValidator {
   async validateCode(code, filePath = 'test.js') {
     const errors = [];
     const warnings = [];
-
-    // Determine if TypeScript based on extension
     const isTypeScript = filePath.endsWith('.ts') || filePath.endsWith('.tsx');
 
-    // Check TypeScript
+    // Basic syntax validation that works in browser
+    try {
+      new Function(code);
+    } catch (error) {
+      errors.push({
+        type: 'syntax',
+        message: error.message,
+        severity: 'error'
+      });
+    }
+
+    // Basic formatting check (simulate Prettier style)
+    const basicFormattingErrors = this.checkBasicFormatting(code);
+    warnings.push(...basicFormattingErrors);
+
+    // If TypeScript is loaded, attempt basic type checking
     if (this.tsLoaded && isTypeScript) {
       const tsErrors = this.validateTypeScript(code);
       errors.push(...tsErrors);
     }
 
-    // Check ESLint
+    // If ESLint is loaded, attempt basic linting
     if (this.eslintLoaded) {
       const eslintErrors = await this.validateESLint(code, isTypeScript);
-      errors.push(...eslintErrors);
+      warnings.push(...eslintErrors);
     }
 
     return {
@@ -138,53 +157,141 @@ class CodeValidator {
     return errors;
   }
 
+  /**
+   * Basic formatting checks that work in browser environment
+   */
+  checkBasicFormatting(code) {
+    const warnings = [];
+    
+    // Check for missing semicolons
+    const lines = code.split('\n');
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      if (trimmed && 
+          !trimmed.endsWith(';') && 
+          !trimmed.endsWith('{') && 
+          !trimmed.endsWith('}') &&
+          !trimmed.startsWith('//') &&
+          !trimmed.startsWith('/*') &&
+          !trimmed.startsWith('*') &&
+          (trimmed.includes('const ') || 
+           trimmed.includes('let ') || 
+           trimmed.includes('var ') ||
+           trimmed.includes('function ') ||
+           trimmed.includes('return '))) {
+        warnings.push({
+          type: 'formatting',
+          message: `Missing semicolon on line ${index + 1}`,
+          severity: 'warning',
+          line: index + 1
+        });
+      }
+    });
+
+    // Check for inconsistent indentation
+    const indentPattern = /^(\s+)/;
+    let baseIndent = null;
+    lines.forEach((line, index) => {
+      const match = line.match(indentPattern);
+      if (match && line.trim()) {
+        const currentIndent = match[1].length;
+        if (baseIndent === null) {
+          baseIndent = currentIndent;
+        } else if (currentIndent > baseIndent && currentIndent % baseIndent !== 0) {
+          warnings.push({
+            type: 'formatting',
+            message: `Inconsistent indentation on line ${index + 1}`,
+            severity: 'warning',
+            line: index + 1
+          });
+        }
+      }
+    });
+
+    return warnings;
+  }
+
   async validateESLint(code, isTypeScript = false) {
-    if (!window.ESLint) return [];
+    if (!window.ESLint) {
+      return this.basicESLintCheck(code);
+    }
 
     try {
+      // Use simplified ESLint config that works in browser
       const eslint = new window.ESLint.ESLint({
         useEslintrc: false,
         baseConfig: {
-          parser: isTypeScript ? '@typescript-eslint/parser' : undefined,
-          env: {
-            browser: true,
-            es2021: true,
-            node: true
-          },
           parserOptions: {
             ecmaVersion: 2021,
             sourceType: 'module'
           },
           rules: {
             'no-unused-vars': 'warn',
-            'no-undef': 'error',
             'semi': ['error', 'always'],
             'quotes': ['error', 'single']
           }
         }
       });
 
-      const results = await eslint.lintText(code);
-      const errors = [];
+      const results = await eslint.lintText(code, { filePath: 'temp.js' });
+      const messages = results[0]?.messages || [];
 
-      results.forEach(result => {
-        result.messages.forEach(message => {
-          errors.push({
-            type: 'eslint',
-            message: message.message,
-            severity: message.severity === 2 ? 'error' : 'warning',
-            line: message.line,
-            column: message.column,
-            rule: message.ruleId
-          });
-        });
-      });
-
-      return errors;
+      return messages.map(message => ({
+        type: 'eslint',
+        message: message.message,
+        severity: message.severity === 2 ? 'error' : 'warning',
+        ruleId: message.ruleId,
+        line: message.line,
+        column: message.column
+      }));
     } catch (error) {
-      console.warn('ESLint validation failed:', error);
-      return [];
+      console.warn('Full ESLint failed, using basic checks:', error);
+      return this.basicESLintCheck(code);
     }
+  }
+
+  basicESLintCheck(code) {
+    const warnings = [];
+    
+    // Check for missing semicolons
+    const lines = code.split('\n');
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      if (trimmed && 
+          !trimmed.endsWith(';') && 
+          !trimmed.endsWith('{') && 
+          !trimmed.endsWith('}') &&
+          !trimmed.startsWith('//') &&
+          !trimmed.startsWith('/*') &&
+          !trimmed.startsWith('*') &&
+          (trimmed.includes('const ') || 
+           trimmed.includes('let ') || 
+           trimmed.includes('var ') ||
+           trimmed.includes('function ') ||
+           trimmed.includes('return '))) {
+        warnings.push({
+          type: 'eslint',
+          message: `Missing semicolon at end of statement`,
+          severity: 'warning',
+          ruleId: 'semi',
+          line: index + 1
+        });
+      }
+    });
+
+    // Check for quotes consistency
+    const singleQuotes = (code.match(/'/g) || []).length;
+    const doubleQuotes = (code.match(/"/g) || []).length;
+    if (singleQuotes > 0 && doubleQuotes > 0) {
+      warnings.push({
+        type: 'eslint',
+        message: `Strings must use single quotes`,
+        severity: 'warning',
+        ruleId: 'quotes'
+      });
+    }
+
+    return warnings;
   }
 
   async formatCode(code, filePath = 'test.js') {
@@ -222,3 +329,6 @@ class CodeValidator {
     };
   }
 }
+
+// Make classes available globally
+window.CodeValidator = CodeValidator;
