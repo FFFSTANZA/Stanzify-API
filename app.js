@@ -376,6 +376,7 @@ class AIWorker {
     this.name = name;
     this.specialty = specialty;
     this.responseVariation = responseVariation;
+    this.connector = new RealAIConnector();
   }
 
   async sendPrompt({ prompt, contextFiles }) {
@@ -385,25 +386,72 @@ class AIWorker {
     const summary = contextFiles
       .map((file) => `• ${file.path} (${file.content.length} chars)`)
       .join("\n");
+
+    try {
+      // Try to get real AI response
+      const enhancedPrompt = this.buildSpecializedPrompt(prompt, summary);
+      const realResponse = await this.connector.sendPrompt({
+        prompt: enhancedPrompt,
+        contextFiles
+      });
+
+      return {
+        aiName: this.name,
+        content: `${this.name} (${this.specialty} specialist) response:\n\n${realResponse}`,
+        timestamp: Date.now(),
+        specialty: this.specialty,
+        isRealAI: true
+      };
+    } catch (error) {
+      // Fallback to intelligent response
+      const specialtyNote = this.getSpecialtyResponse(prompt);
+      
+      return {
+        aiName: this.name,
+        content: `${this.name} (${this.specialty} specialist) response:\n\n${specialtyNote}\n\nPrompt: ${prompt.slice(0, 150)}${prompt.length > 150 ? "..." : ""}\n\nContext files (${contextFiles.length}):\n${summary || "none"}\n\nℹ️ Note: Running in offline mode. Configure API keys for real AI responses.`,
+        timestamp: Date.now(),
+        specialty: this.specialty,
+        isRealAI: false
+      };
+    }
+  }
+
+  buildSpecializedPrompt(prompt, contextSummary) {
+    const specialtyContext = this.getSpecialtyContext();
     
-    const specialtyNote = this.getSpecialtyResponse(prompt);
-    
-    return {
-      aiName: this.name,
-      content: `${this.name} (${this.specialty} specialist) response:\n\n${specialtyNote}\n\nPrompt: ${prompt.slice(0, 150)}${prompt.length > 150 ? "..." : ""}\n\nContext files (${contextFiles.length}):\n${summary || "none"}`,
-      timestamp: Date.now(),
-      specialty: this.specialty
+    return `You are ${this.name}, a ${this.specialty} specialist AI assistant.
+
+Your specialty: ${specialtyContext}
+
+User prompt: ${prompt}
+
+Context files:
+${contextSummary}
+
+Please provide a comprehensive response focusing on your ${this.specialty} expertise. Include specific recommendations, code examples, and actionable insights.`;
+  }
+
+  getSpecialtyContext() {
+    const contexts = {
+      general: "You provide well-rounded, comprehensive solutions across all programming domains with expertise in best practices, design patterns, and clean code principles.",
+      refactor: "You specialize in code refactoring, focusing on improving code structure, readability, maintainability, and adherence to SOLID principles and design patterns.",
+      debug: "You excel at debugging and troubleshooting. You systematically analyze problems, identify root causes, and provide precise fixes with detailed explanations.",
+      optimize: "You focus on performance optimization, including algorithm efficiency, memory usage, computational complexity, and runtime performance improvements.",
+      architecture: "You specialize in software architecture and system design, recommending scalable patterns, proper separation of concerns, and maintainable structures.",
+      create: "You excel at creating new features and components, following best practices, clean architecture, and modern development patterns."
     };
+    
+    return contexts[this.specialty] || contexts.general;
   }
 
   getSpecialtyResponse(prompt) {
     const responses = {
-      general: "I provide well-rounded, comprehensive solutions across various tasks.",
-      refactor: "I specialize in code refactoring. I would restructure this code for better maintainability and readability.",
-      debug: "As a debugging specialist, I would identify the root cause and provide a precise fix.",
-      optimize: "I focus on performance optimization. Here's how to make this faster and more efficient.",
-      architecture: "From an architectural perspective, I recommend a scalable, maintainable design pattern.",
-      create: "I excel at creating new features. Here's a clean implementation with best practices."
+      general: "I provide well-rounded, comprehensive solutions across various programming tasks.",
+      refactor: "I analyze code for refactoring opportunities. Based on the prompt, I would recommend restructuring for better maintainability, reducing complexity, and improving readability.",
+      debug: "I systematically debug issues by examining error patterns, testing edge cases, and providing step-by-step troubleshooting guidance.",
+      optimize: "I identify performance bottlenecks and suggest optimizations including algorithmic improvements, memory management, and efficient data structures.",
+      architecture: "I design scalable architectures using proven patterns, considering separation of concerns, dependency injection, and maintainable structures.",
+      create: "I create robust features following best practices, including proper error handling, validation, and clean code principles."
     };
     
     return responses[this.specialty] || responses.general;
@@ -903,18 +951,208 @@ class ParallelRefinementTracks {
   }
 }
 
-class MockGPTConnector {
+class RealAIConnector {
   constructor() {
-    this.id = "mock-gpt4o";
-    this.label = "GPT-4o mini (mock)";
+    this.id = "real-ai-connector";
+    this.label = "AI Connector (Real Integration)";
+    this.apiKey = this.getApiKey();
+    this.baseURL = this.getBaseURL();
+  }
+
+  getApiKey() {
+    // Check localStorage first, then environment, then prompt user
+    return localStorage.getItem('ai_api_key') || 
+           window.AI_API_KEY || 
+           this.promptForApiKey();
+  }
+
+  getBaseURL() {
+    const provider = localStorage.getItem('ai_provider') || 
+                    window.AI_PROVIDER || 
+                    'openai';
+    
+    switch (provider) {
+      case 'openai':
+        return 'https://api.openai.com/v1';
+      case 'anthropic':
+        return 'https://api.anthropic.com';
+      case 'huggingface':
+        return 'https://api-inference.huggingface.co/models';
+      default:
+        return 'https://api.openai.com/v1';
+    }
+  }
+
+  promptForApiKey() {
+    const apiKey = prompt('Enter your AI API key (OpenAI, Anthropic, etc.):');
+    if (apiKey) {
+      localStorage.setItem('ai_api_key', apiKey);
+      return apiKey;
+    }
+    return null;
   }
 
   async sendPrompt({ prompt, contextFiles }) {
-    await delay(600 + Math.random() * 400);
+    if (!this.apiKey) {
+      return this.fallbackResponse(prompt, contextFiles);
+    }
+
+    try {
+      const summary = contextFiles
+        .map((file) => `• ${file.path} (${file.content.length} chars)`)
+        .join("\n");
+
+      const enhancedPrompt = this.buildEnhancedPrompt(prompt, contextFiles, summary);
+      
+      const response = await this.makeAPIRequest(enhancedPrompt);
+      
+      if (response.error) {
+        return this.fallbackResponse(prompt, contextFiles, response.error);
+      }
+
+      return response.content;
+    } catch (error) {
+      console.warn('AI API request failed:', error);
+      return this.fallbackResponse(prompt, contextFiles, error.message);
+    }
+  }
+
+  buildEnhancedPrompt(originalPrompt, contextFiles, fileSummary) {
+    return `You are an expert code assistant. The user is asking for help with their code.
+
+User Request: ${originalPrompt}
+
+Context Files (${contextFiles.length}):
+${fileSummary || "No additional context files"}
+
+Please provide a detailed, helpful response that directly addresses their request. Include code examples where relevant and explain your reasoning.`;
+  }
+
+  async makeAPIRequest(prompt) {
+    try {
+      const provider = localStorage.getItem('ai_provider') || 'openai';
+      
+      switch (provider) {
+        case 'openai':
+          return await this.callOpenAI(prompt);
+        case 'anthropic':
+          return await this.callAnthropic(prompt);
+        case 'huggingface':
+          return await this.callHuggingFace(prompt);
+        default:
+          return await this.callOpenAI(prompt);
+      }
+    } catch (error) {
+      return { error: error.message };
+    }
+  }
+
+  async callOpenAI(prompt) {
+    const response = await fetch(`${this.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: 1000,
+        temperature: 0.7
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return { error: error.error?.message || 'OpenAI API request failed' };
+    }
+
+    const data = await response.json();
+    return { content: data.choices[0]?.message?.content || 'No response generated' };
+  }
+
+  async callAnthropic(prompt) {
+    const response = await fetch(`${this.baseURL}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'x-api-key': this.apiKey,
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 1000,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return { error: error.error?.message || 'Anthropic API request failed' };
+    }
+
+    const data = await response.json();
+    return { content: data.content[0]?.text || 'No response generated' };
+  }
+
+  async callHuggingFace(prompt) {
+    const model = localStorage.getItem('hf_model') || 'microsoft/DialoGPT-medium';
+    
+    const response = await fetch(`${this.baseURL}/${model}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: {
+          max_length: 1000,
+          temperature: 0.7
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      return { error: 'Hugging Face API request failed: ' + error };
+    }
+
+    const data = await response.json();
+    return { content: Array.isArray(data) ? data[0]?.generated_text || 'No response generated' : data.generated_text || 'No response generated' };
+  }
+
+  fallbackResponse(prompt, contextFiles, error = null) {
     const summary = contextFiles
       .map((file) => `• ${file.path} (${file.content.length} chars)`)
       .join("\n");
-    return `Mock connector (${this.label}) received your prompt.\n\nPrompt preview:\n${prompt.slice(0, 200)}\n\nContext files (${contextFiles.length}):\n${summary || "none supplied"}\n\nNext: replace this mock with a real browser automation connector.`;
+
+    let response = `AI Assistant Response\n\n`;
+    if (error) {
+      response += `⚠️ API Error: ${error}\n\n`;
+      response += `Falling back to offline mode.\n\n`;
+    } else {
+      response += `Running in offline/development mode.\n\n`;
+    }
+
+    response += `Prompt: ${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}\n\n`;
+    response += `Context files (${contextFiles.length}):\n${summary || "none supplied"}\n\n`;
+    response += `💡 Tip: Configure an AI API key in localStorage to enable real AI responses:\n`;
+    response += `localStorage.setItem('ai_api_key', 'your-api-key')\n`;
+    response += `localStorage.setItem('ai_provider', 'openai|anthropic|huggingface')\n\n`;
+    response += `I'm analyzing your code and providing guidance based on best practices...`;
+
+    return response;
   }
 }
 
@@ -927,7 +1165,7 @@ class StanzifyApp {
     this.expandedPaths = new Set(["/"]);
     this.conversationHistory = [];
     this.models = new Map();
-    this.connector = new MockGPTConnector();
+    this.connector = new RealAIConnector();
     this.taskClassifier = new TaskClassifier();
     this.aiPoolManager = new AIPoolManager();
     this.responseMerger = new ResponseMerger();

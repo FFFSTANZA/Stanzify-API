@@ -450,3 +450,6 @@ ${[
 `;
   }
 }
+
+// Make class available globally
+window.QualityScorer = QualityScorer;

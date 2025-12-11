@@ -381,3 +381,6 @@ class VerificationUI {
     });
   }
 }
+
+// Make class available globally
+window.VerificationUI = VerificationUI;

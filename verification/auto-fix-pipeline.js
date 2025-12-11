@@ -292,3 +292,7 @@ Return ONLY the fixed code in a code block, with no explanation.`;
     }
   }
 }
+
+// Make classes available globally
+window.AutoFixPipeline = AutoFixPipeline;
+window.ErrorFixingAI = ErrorFixingAI;
